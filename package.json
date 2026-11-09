@@ -1,0 +1,17 @@
+{
+  "name": "gluco-care-api",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "hono": "^4.0.0"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0",
+    "typescript": "^5.0.0"
+  }
+}
