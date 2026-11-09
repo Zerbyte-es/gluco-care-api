@@ -2,7 +2,8 @@
 import { Hono } from 'hono';
 import { createClient } from '@supabase/supabase-js';
 
-const app = Hono<{ Bindings: { SUPABASE_URL: string; SUPABASE_ANON_KEY: string }>();
+const app = new Hono<{ Bindings: { SUPABASE_URL: string; SUPABASE_ANON_KEY: string; SUPABASE_SERVICE_ROLE_KEY: string }>();
+
 
 // Helper to initialize Supabase client from Cloudflare environment bindings
 const getSupabase = (env: any) => createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY);
