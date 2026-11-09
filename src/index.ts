@@ -1,12 +1,20 @@
-// src/index.ts
 import { Hono } from 'hono';
 import { createClient } from '@supabase/supabase-js';
 
-const app = new Hono<{ Bindings: { SUPABASE_URL: string; SUPABASE_ANON_KEY: string; SUPABASE_SERVICE_ROLE_KEY: string }>();
+// Define your Cloudflare Worker environment bindings
+type Bindings = {
+  SUPABASE_URL: string;
+  SUPABASE_ANON_KEY: string;
+  SUPABASE_SERVICE_ROLE_KEY: string;
+};
 
+const app = new Hono<{ Bindings: Bindings }>();
 
-// Helper to initialize Supabase client from Cloudflare environment bindings
-const getSupabase = (env: any) => createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY);
+// Helper for user-facing API calls (respects RLS using the Anon Key)
+const getSupabase = (env: Bindings) => createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY);
+
+// Helper for background cron tasks (bypasses RLS using the Service Role Key)
+const getAdminSupabase = (env: Bindings) => createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY);
 
 // 1. Glucose Upload Endpoint
 app.post('/api/glucose/upload', async (c) => {
@@ -21,10 +29,10 @@ app.post('/api/glucose/upload', async (c) => {
 
   if (error) return c.json({ error: error.message }, 400);
 
-  // Check clinical threshold (e.g., > 200 mg/dL triggers immediate doctor alert)
+  // Check clinical threshold (> 200 mg/dL triggers immediate doctor alert)
   const isCritical = glucose_level > 200;
 
-  // Reset any pending schedules for this user
+  // Reset pending schedules for this user upon upload
   await supabase
     .from('check_schedules')
     .update({ status: 'completed', escalation_count: 0 })
@@ -42,8 +50,9 @@ app.post('/api/glucose/upload', async (c) => {
 // 2. Native Cloudflare Scheduled Worker (The 30-Minute Escalation Loop)
 export default {
   fetch: app.fetch,
-  async scheduled(event: ScheduledEvent, env: any, ctx: ExecutionContext) {
-    const supabase = getSupabase(env);
+  async scheduled(event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) {
+    // Use the admin client here so the background worker can scan all users, bypassing RLS
+    const supabase = getAdminSupabase(env);
     console.log("Running 30-minute escalation check loop...");
 
     const now = new Date().toISOString();
@@ -55,18 +64,21 @@ export default {
       .eq('status', 'pending')
       .lt('scheduled_time', now);
 
-    if (error || !overdueSchedules) return;
+    if (error || !overdueSchedules) {
+      console.error("Error fetching overdue schedules:", error);
+      return;
+    }
 
     for (const schedule of overdueSchedules) {
-      // Trigger push notification via Firebase or your notification gateway
-      console.log(`[ESCALATION] Sending reminder to ${schedule.users.full_name}`);
+      // Trigger push notification reminder
+      console.log(`[ESCALATION] Sending reminder to user ID: ${schedule.user_id}`);
       
       // Update last reminder sent timestamp and increment escalation counter
       await supabase
         .from('check_schedules')
         .update({ 
           last_reminder_sent_at: now,
-          escalation_count: schedule.escalation_count + 1 
+          escalation_count: (schedule.escalation_count || 0) + 1 
         })
         .eq('id', schedule.id);
     }
